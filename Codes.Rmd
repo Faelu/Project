@@ -1,0 +1,308 @@
+---
+title: "STA457Project"
+author: "Jun Xian Lu"
+date: "2023-04-03"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Library and Functions, message = FALSE,warning = FALSE}
+library(readxl)
+library(gdata)
+library(tseries)
+library(TSA)
+library(fUnitRoots)
+library(astsa)
+library(Metrics)
+filter = stats::filter
+lag = stats::lag
+RMSE = function(x,x_hat){
+  ans = sqrt((sum((x-x_hat)^2))/length(x))
+  return (ans)
+}
+```
+
+```{r Import Data}
+data = read_excel("Geomagnetic_Intensity_Data.xlsx")
+data
+n = length(data$Year)
+nTrain = n - floor(n*0.1)
+nTest = n - nTrain
+```
+
+```{r North_Geomagnetic_Pole,  message = FALSE,warning = FALSE}
+# Time plot => non-stationary, autocovariance may not be constant
+tsplot(x = data$Year[1:nTrain], y = data$North_Geomagnetic_Pole[1:nTrain], lwd = 2, gg = TRUE, col = 2, xlab = "Year", ylab = "Magnetic Field Strength (Nanotesla)", cex.lab=0.7,cex.axis=0.55, main = "North Geomagnetic Pole")
+
+# mean level plot => non-stationary, changing mean
+cummeanNorth =cumsum(data$North_Geomagnetic_Pole[1:nTrain]) / seq_along(data$North_Geomagnetic_Pole[1:nTrain])
+plot(x=data$Year[1:nTrain],y=cummeanNorth, type = "l", xlab = "Year", ylab="Mean Level",xaxt="n")
+axis(side=1,at=data$Year,las=2)
+
+# ACF => Non-stationary may require differencing or transformation
+# PACF => AR(1)
+acf2(data$North_Geomagnetic_Pole[1:nTrain], max.lag = 50, main = "North Geomagnetic Pole")
+
+# ADF Test => nc fail to reject at 5%
+# ADF.test => fail to reject => non stationary suggest differencing
+# KPSS Test => both level and trend reject H0, non stationary
+p_max_lag = round((391/100)^(1/4)*12)
+adfTest(data$North_Geomagnetic_Pole[1:nTrain], type = "nc", lags = p_max_lag)
+adfTest(data$North_Geomagnetic_Pole[1:nTrain], type = "c", lags = p_max_lag)
+adfTest(data$North_Geomagnetic_Pole[1:nTrain], type = "ct", lags = p_max_lag)
+adf.test(data$North_Geomagnetic_Pole[1:nTrain], k = p_max_lag)
+kpss.test(data$North_Geomagnetic_Pole[1:nTrain], null = "Level")
+kpss.test(data$North_Geomagnetic_Pole[1:nTrain], null = "Trend")
+
+# diff first order no luck still non stationary, same with other transformations
+diffN1 = diff(data$North_Geomagnetic_Pole[1:nTrain])
+tsplot(x = data$Year[2:nTrain], y = diffN1, lwd = 2, gg = TRUE, col = 2, xlab = "Year", ylab = "Magnetic Field Strength (Nanotesla)", cex.lab=0.7,cex.axis=0.55, main = "North Geomagnetic Pole First Order Difference")
+acf2(diffN1, max.lag = 50, main = "North Geomagnetic Pole First Order Difference")
+p_max_lag = round((length(diffN1)/100)^(1/4)*12)
+adfTest(diffN1, type = "nc", lags = p_max_lag)
+adfTest(diffN1, type = "c", lags = p_max_lag)
+adfTest(diffN1, type = "ct", lags = p_max_lag)
+adf.test(diffN1, k = p_max_lag)
+kpss.test(diffN1, null = "Level")
+kpss.test(diffN1, null = "Trend")
+
+# second order differencing
+diffN2 = diff(data$North_Geomagnetic_Pole[1:nTrain], differences = 2)
+tsplot(x = data$Year[3:nTrain], y = diffN2, lwd = 2, gg = TRUE, col = 2, xlab = "Year", ylab = "Magnetic Field Strength (Nanotesla)", cex.lab=0.7,cex.axis=0.55, main = "North Geomagnetic Pole Second Order Difference")
+# acf shows seasonal effects at 5,10,20,25, tried seasonal lags at 5,10,20, best result is lag 10
+acf2(diffN2, max.lag = 50, main = "North Geomagnetic Pole Second Order Difference")
+# adf => stationary
+# kpss fail to reject when alpha = 1%
+p_max_lag = round((length(diffN2)/100)^(1/4)*12)
+adfTest(diffN2, type = "nc", lags = p_max_lag)
+adfTest(diffN2, type = "c", lags = p_max_lag)
+adfTest(diffN2, type = "ct", lags = p_max_lag)
+adf.test(diffN2, k = p_max_lag)
+kpss.test(diffN2, null = "Level")
+kpss.test(diffN2, null = "Trend")
+# second order differencing and an additional seasonal differencing at lag 10 (SEEMS OVER DIFFERENCED)
+diffN2L10 = diff(diffN2, lag = 10)
+# time plot
+tsplot(x = data$Year[13:nTrain], y = diffN2L10, lwd = 2, gg = TRUE, col = 2, xlab = "Year", ylab = "Magnetic Field Strength (Nanotesla)", cex.lab=0.7,cex.axis=0.55, main = "North Geomagnetic Pole Second Order Difference + Seasonal Difference at Lag 10")
+# acf + pacf
+acf2(diffN2L10, max.lag = 50, main = "North Geomagnetic Pole Second Order Difference + Seasonal Difference at Lag 10")
+# adf tests + KPSS tests
+p_max_lag = round((length(diffN2L10)/100)^(1/4)*12)
+adfTest(diffN2L10, type = "nc",lags = p_max_lag)
+adfTest(diffN2L10, type = "c",lags = p_max_lag)
+adfTest(diffN2L10, type = "ct",lags = p_max_lag)
+adf.test(diffN2L10, k = p_max_lag)
+kpss.test(diffN2L10, null = "Level")
+kpss.test(diffN2L10, null = "Trend")
+
+# New suggestion Seasonal difference at lag 5 then ordinary difference
+# tried lag 5,10,15,20, lag 5 seems the best since other ones fail KPSS test
+diffNL5D1 = diff(diff(data$North_Geomagnetic_Pole[1:nTrain],lag = 5))
+tsplot(x = data$Year[7:nTrain], y = diffNL5D1, lwd = 2, gg = TRUE, col = 2, xlab = "Year", ylab = "Magnetic Field Strength (Nanotesla)", cex.lab=0.7,cex.axis=0.55, main = "North Geomagnetic Pole First Order Seasonal Difference at Lag 5 + Standard Difference",cex.main = 0.8)
+# cummean
+cummeanNL5D1 =cumsum(diffNL5D1) / seq_along(diffNL5D1)
+plot(x=data$Year[7:nTrain],y=cummeanNL5D1, type = "l", xlab = "Year", ylab="Mean Level",xaxt="n")
+axis(side=1,at=data$Year,las=2)
+# acf AR signature since acf tails off, perhaps trig |cos| waves
+acf2(diffNL5D1, max.lag = 50)
+# adf tests + KPSS tests
+p_max_lag = round((length(diffNL5D1)/100)^(1/4)*12)
+adfTest(diffNL5D1, type = "nc",lags = p_max_lag)
+adfTest(diffNL5D1, type = "c",lags = p_max_lag)
+adfTest(diffNL5D1, type = "ct",lags = p_max_lag)
+adf.test(diffNL5D1, k = p_max_lag)
+kpss.test(diffNL5D1, null = "Level")
+kpss.test(diffNL5D1, null = "Trend")
+
+# EACF
+eacf(diffNL5D1,ar.max=10,ma.max = 10)
+diffNL5D1.aic=matrix(0,10,10)
+diffNL5D1.bic = matrix(0,10,10)
+for (i in 0:9) for (j in 0:9){
+  diffNL5D1.fit = arima(diffNL5D1, order = c(i,0,j), method = "ML", include.mean = TRUE)
+  diffNL5D1.aic[i+1,j+1] = diffNL5D1.fit$aic
+  diffNL5D1.bic[i+1,j+1] = BIC(diffNL5D1.fit)
+}
+diffNL5D1.aic_vec = sort(unmatrix(diffNL5D1.aic, byrow = FALSE))[1:20]
+diffNL5D1.bic_vec = sort(unmatrix(diffNL5D1.bic, byrow = FALSE))[1:20]
+diffNL5D1.aic_vec
+diffNL5D1.bic_vec
+
+# fitting
+# diffNL5D1.fit_1 is the best, simplest, decent aic bic, passed Ljung Box, lower SE of estimates
+diffNL5D1.fit_1 = sarima(diffNL5D1,1,0,6, gg = TRUE, col = 4)
+diffNL5D1.fit_1
+diffNL5D1.fit_2 = sarima(diffNL5D1,2,0,6, gg = TRUE, col = 4)
+diffNL5D1.fit_2
+diffNL5D1.fit_3 = sarima(diffNL5D1,5,0,5, gg = TRUE, col = 4)
+diffNL5D1.fit_3
+# seasonality  fit 5 best aic and lowest se
+diffNL5D1.fit_S1 = sarima(diffNL5D1,1,0,6,0,0,1,5, gg = TRUE, col = 4)
+diffNL5D1.fit_S2 = sarima(diffNL5D1,1,0,6,0,0,3,5, gg = TRUE, col = 4)
+diffNL5D1.fit_S3 = sarima(diffNL5D1,1,0,6,0,0,5,5, gg = TRUE, col = 4)
+diffNL5D1.fit_S4 = sarima(diffNL5D1,1,0,6,1,0,0,5, gg = TRUE, col = 4)
+diffNL5D1.fit_S5 = sarima(diffNL5D1,1,0,6,3,0,0,5, gg = TRUE, col = 4)
+diffNL5D1.fit_S6 = sarima(diffNL5D1,1,0,6,5,0,0,5, gg = TRUE, col = 4)
+diffNL5D1.fit_S7 = sarima(diffNL5D1,1,0,6,1,0,1,5, gg = TRUE, col = 4)
+c(diffNL5D1.fit_S1$fit$aic,diffNL5D1.fit_S2$fit$aic,diffNL5D1.fit_S3$fit$aic,diffNL5D1.fit_S4$fit$aic,diffNL5D1.fit_S5$fit$aic,diffNL5D1.fit_S6$fit$aic,diffNL5D1.fit_S7$fit$aic)
+# shapiro test
+diffNL5D1.fit_55 = arima(diffNL5D1, order = c(1,0,6), seasonal = list(order=c(3,0,0), period = 5), method = "ML", include.mean = TRUE)
+shapiro.test(residuals(diffNL5D1.fit_55))
+# model
+Nmodel = sarima(data$North_Geomagnetic_Pole[1:nTrain],1,1,6,3,1,0,5)
+Nmodel
+
+# forecast, since errors not normal mention this when finding prediction interval
+x.test.forecast.N  <- matrix(0,nTest,1)
+x.test.res.N <- matrix(0,nTest,1)
+x.test.se.N <- matrix(0,nTest,1)
+
+for (i in (nTrain : (n-1)) ){
+  x.test.fit <- sarima(data$North_Geomagnetic_Pole[1:i],1,1,6,3,1,0,5, details = FALSE, Model= FALSE)
+  x.test<- predict(x.test.fit$fit, 1)
+  x.test.forecast.N[i-nTrain+1,1] <- as.numeric(x.test$pred)
+  x.test.res.N[i-nTrain+1,1] <- as.numeric(x.test$pred) - data$North_Geomagnetic_Pole[i+1]
+  x.test.se.N[i-nTrain+1,1] <- as.numeric(x.test$se)
+}
+
+# graph 1
+tsplot(x=seq(data$Year[nTrain+1],2023), y = unlist(x.test.forecast.N), col = "red", lwd=2, type = "b", gg=TRUE,
+       ylab='Magnetic Field Strength (Nanotesla)', xlab = 'Year', spaghetti=TRUE,cex.lab=0.7,cex.axis=0.55)
+lines(x=data$Year[(nTrain+1):n], y=data$North_Geomagnetic_Pole[(nTrain+1):n], pch=18, col="blue", type="b", lty=2)
+lines(x=seq(data$Year[nTrain+1],2023), y = unlist(x.test.forecast.N)
+      +unlist(x.test.se.N*1.96), pch=2, col="black", type="l", lty=2)
+lines(x=seq(data$Year[nTrain+1],2023), y = unlist(x.test.forecast.N)
+      -unlist(x.test.se.N*1.96), pch=2, col="black", type="l", lty=2)
+legend("topleft", legend=c("Predictions","Test Set"), col=c(2,5), lty=1, bty="n")
+
+# graph 2
+plot(unlist(x.test.forecast.N), type="b", pch=19, col="red", xlab="Time", ylab="Time Series")
+lines(data$North_Geomagnetic_Pole[(nTrain+1):n], pch=18, col="blue", type="b", lty=2)
+
+plot(unlist(x.test.forecast.N), type="b", pch=19, col="red", xlab="Time", ylab="Time Series")
+lines(unlist(x.test.forecast.N)+unlist(x.test.se.N*1.96), pch=2, col="black", type="l", lty=2)
+lines(unlist(x.test.forecast.N)-unlist(x.test.se.N*1.96), pch=2, col="black", type="l", lty=2)
+
+# RMSE
+RMSEN = RMSE(data$North_Geomagnetic_Pole[(nTrain+1):n],x.test.forecast.N)
+RMSEN
+
+# forecast the next 10 years
+x.test.forecast.N10  <- matrix(0,nTest+10,1)
+x.test.res.N10 <- matrix(0,nTest+10,1)
+x.test.se.N10 <- matrix(0,nTest+10,1)
+
+for (i in (nTrain : (n-1+10)) ){
+  x.test.fitN10 <- sarima(data$North_Geomagnetic_Pole[1:i],1,1,6,3,1,0,5, details = FALSE, Model= FALSE)
+  x.testN10 <- predict(x.test.fitN10$fit, 1)
+  x.test.forecast.N10[i-nTrain+1,1] <- as.numeric(x.testN10$pred)
+  x.test.res.N10[i-nTrain+1,1] <- as.numeric(x.testN10$pred) - data$North_Geomagnetic_Pole[i+1]
+  x.test.se.N10[i-nTrain+1,1] <- as.numeric(x.testN10$se)
+}
+
+# graph 
+tsplot(x=seq(data$Year[nTrain+1],2033), y = unlist(x.test.forecast.N10), col = "red", lwd=2, type = "b", gg=TRUE,
+       ylab='Magnetic Field Strength (Nanotesla)', xlab = 'Year', spaghetti=TRUE,cex.lab=0.7,cex.axis=0.55)
+lines(x=data$Year[(nTrain+1):n], y=data$North_Geomagnetic_Pole[(nTrain+1):n], pch=18, col="blue", type="b", lty=2)
+abline(v=2023, lty=2, col=4)
+lines(x=seq(data$Year[nTrain+1],2033), y = unlist(x.test.forecast.N10)
+      +unlist(x.test.se.N10*1.96), pch=2, col="black", type="l", lty=2)
+lines(x=seq(data$Year[nTrain+1],2033), y = unlist(x.test.forecast.N10)
+      -unlist(x.test.se.N10*1.96), pch=2, col="black", type="l", lty=2)
+legend("topleft", legend=c("Predictions","Test Set"), col=c(2,5), lty=1, bty="n")
+```
+
+```{r South_Geomagnetic_Pole, message = FALSE,warning = FALSE}
+# time plot changing mean, first difference should be good, seasonality
+tsplot(x = data$Year[1:nTrain], y = data$South_Geomagnetic_Pole[1:nTrain], lwd = 2, gg = TRUE, col = 5, xlab = "Year", ylab = "Magnetic Field Strength (Nanotesla)", cex.lab=0.7,cex.axis=0.55, main = "South Geomagnetic Pole")
+# mean level, changing mean
+cummeanSouth =cumsum(data$South_Geomagnetic_Pole[1:nTrain]) / seq_along(data$South_Geomagnetic_Pole[1:nTrain])
+plot(x=data$Year[1:nTrain],y=cummeanSouth, type = "l", xlab = "Year", ylab="Mean Level",xaxt="n")
+axis(side=1,at=data$Year,las=2)
+# acf and pacf require differencing
+acf2(data$South_Geomagnetic_Pole[1:nTrain], max.lag = 50, main = "South Geomagnetic Pole")
+# adf and kpss test => differencing is required
+p_max_lag_S = round((391/100)^(1/4)*12)
+adfTest(data$South_Geomagnetic_Pole[1:nTrain], type = "nc", lags = p_max_lag_S)
+adfTest(data$South_Geomagnetic_Pole[1:nTrain], type = "c", lags = p_max_lag_S)
+adfTest(data$South_Geomagnetic_Pole[1:nTrain], type = "ct", lags = p_max_lag_S)
+adf.test(data$South_Geomagnetic_Pole[1:nTrain], k = p_max_lag_S)
+kpss.test(data$South_Geomagnetic_Pole[1:nTrain], null = "Level")
+kpss.test(data$South_Geomagnetic_Pole[1:nTrain], null = "Trend")
+
+# First order difference
+diffS1 = diff(data$South_Geomagnetic_Pole[1:nTrain])
+tsplot(x = data$Year[2:nTrain], y = diffS1, lwd = 2, gg = TRUE, col = 2, xlab = "Year", ylab = "Magnetic Field Strength (Nanotesla)", cex.lab=0.7,cex.axis=0.55, main = "South Geomagnetic Pole First Order Difference")
+# acf => tails off
+acf2(diffS1, max.lag = 50, main = "South Geomagnetic Pole First Order Difference")
+# adf and kpss => stationary
+p_max_lag_S = round((length(diffS1)/100)^(1/4)*12)
+adfTest(diffS1, type = "nc", lags = p_max_lag_S)
+adfTest(diffS1, type = "c", lags = p_max_lag_S)
+adfTest(diffS1, type = "ct", lags = p_max_lag_S)
+adf.test(diffS1, k = p_max_lag_S)
+kpss.test(diffS1, null = "Level")
+kpss.test(diffS1, null = "Trend")
+# EACF
+eacf(diffS1,ar.max=10,ma.max = 10)
+diffS1.aic=matrix(0,10,10)
+diffS1.bic = matrix(0,10,10)
+for (i in 0:9) for (j in 0:9){
+  diffS1.fit = arima(diffS1, order = c(i,0,j), method = "ML", include.mean = TRUE)
+  diffS1.aic[i+1,j+1] = diffS1.fit$aic
+  diffS1.bic[i+1,j+1] = BIC(diffS1.fit)
+}
+diffS1.aic_vec = sort(unmatrix(diffS1.aic, byrow = FALSE))[1:20]
+diffS1.bic_vec = sort(unmatrix(diffS1.bic, byrow = FALSE))[1:20]
+diffS1.aic_vec
+diffS1.bic_vec
+# fitting # fit 2 is best
+diffS1.fit_1 = sarima(diffS1,7,0,10, gg = TRUE, col = 4)
+diffS1.fit_2 = sarima(diffS1,7,0,8, gg = TRUE, col = 4)
+diffS1.fit_3 = sarima(diffS1,6,0,8, gg = TRUE, col = 4)
+diffS1.fit_22 = arima(diffS1, order = c(7,0,8), method = "ML", include.mean = TRUE)
+# normality
+shapiro.test(diffS1.fit_22$residuals)
+# forecast, since errors not normal mention this when finding prediction interval
+x.test.forecast.S  <- matrix(0,nTest+10,1)
+x.test.res.S <- matrix(0,nTest+10,1)
+x.test.se.S <- matrix(0,nTest+10,1)
+
+for (i in (nTrain : (n-1+10)) ){
+  x.test.fitS <- arima(data$South_Geomagnetic_Pole[1:i], order=c(7,1,8), method = "ML", include.mean=TRUE)
+  x.testS<- predict(x.test.fitS, 1)
+  x.test.forecast.S[i-nTrain+1,1] <- as.numeric(x.testS$pred)
+  x.test.res.S[i-nTrain+1,1] <- as.numeric(x.testS$pred) - data$South_Geomagnetic_Pole[i+1]
+  x.test.se.S[i-nTrain+1,1] <- as.numeric(x.testS$se)
+}
+
+plot(unlist(x.test.forecast.S), type="b", pch=19, col="red", xlab="Time", ylab="Time Series")
+lines(data$South_Geomagnetic_Pole[(nTrain+1):n], pch=18, col="blue", type="b", lty=2)
+
+plot(unlist(x.test.forecast.S), type="b", pch=19, col="red", xlab="Time", ylab="Time Series")
+lines(unlist(x.test.forecast.S)+unlist(x.test.se.S*1.96), pch=2, col="black", type="l", lty=2)
+lines(unlist(x.test.forecast.S)-unlist(x.test.se.S*1.96), pch=2, col="black", type="l", lty=2)
+
+# RMSE
+RMSES = RMSE(data$South_Geomagnetic_Pole[(nTrain+1):n],x.test.forecast.S)
+RMSES
+```
+
+```{r Report Graph}
+tsplot(x=data$Year,y=cbind(data$North_Geomagnetic_Pole,data$South_Geomagnetic_Pole), col=astsa.col(c(2,5),.5), lwd=2, gg=TRUE, ylab='Magnetic Field Strength (Nanotesla)', xlab = 'Year', spaghetti=TRUE,cex.lab=0.7,cex.axis=0.55)
+legend("bottomleft", legend=c("North_Geomagnetic_Pole","South_Geomagnetic_Pole"), col=c(2,5), lty=1, bty="n")
+```
+
+```{r Potential better model}
+# diff(diffNL5D1,lag = 10), but may be overdifferenced
+# add |cos| 
+
+# south
+# add seasonal models since time series shows seasonality effect
+```
+
